@@ -48,14 +48,18 @@ def _iter_pre_tokens(text: str, pattern: regex.Pattern[str]) -> Iterable[str]:
 def _initialize_pair_freq(
     token_counts: dict[tuple[int, ...], int]
 ) -> dict[tuple[int, int], int]:
-    """统计初始 pair 频次。"""
+    """统计初始 pair 频次（使用局部绑定与相邻成对遍历以减少开销）。"""
+    from itertools import pairwise
+
     pair_freq: dict[tuple[int, int], int] = {}
+    pf_get = pair_freq.get
+    pf_set = pair_freq.__setitem__
     for token, freq in token_counts.items():
         if len(token) < 2:
             continue
-        for i in range(len(token) - 1):
-            pair = (token[i], token[i + 1])
-            pair_freq[pair] = pair_freq.get(pair, 0) + freq
+        for a, b in pairwise(token):
+            k = (a, b)
+            pf_set(k, pf_get(k, 0) + freq)
     return pair_freq
 
 
@@ -68,13 +72,19 @@ def _apply_pair_freq_delta(
     """根据 token 调整 pair 频次。"""
     if len(token) < 2:
         return
-    for i in range(len(token) - 1):
-        pair = (token[i], token[i + 1])
-        new_count = pair_freq.get(pair, 0) + delta * freq
+    from itertools import pairwise
+
+    pf_get = pair_freq.get
+    pf_set = pair_freq.__setitem__
+    pf_pop = pair_freq.pop
+    delta_freq = delta * freq
+    for a, b in pairwise(token):
+        k = (a, b)
+        new_count = pf_get(k, 0) + delta_freq
         if new_count:
-            pair_freq[pair] = new_count
+            pf_set(k, new_count)
         else:
-            pair_freq.pop(pair, None)
+            pf_pop(k, None)
 
 
 def _count_tokens_in_chunk(
@@ -144,7 +154,7 @@ def _pretokenize_corpus(
             num_workers = min(8, max(1, cpu_count))
 
     # Fall back to sequential path for small corpora or single worker
-    if num_workers <= 1 or file_size < 128_000:  # 128 KB threshold
+    if num_workers <= 1 or file_size < 1_000_000:  # 1 MB threshold to avoid process overhead
         text = input_path.read_text(encoding="utf-8", errors="ignore")
         segments = _split_on_specials(text, special_tokens)
 
@@ -281,25 +291,34 @@ def train_bpe(
         merges.append((vocab[a_id], vocab[b_id]))
 
         new_token_counts: defaultdict[tuple[int, ...], int] = defaultdict(int)
+        a_id_local = a_id
+        b_id_local = b_id
+        append_new = new_token_counts.__setitem__
         for token, freq in token_counts.items():
             if len(token) < 2:
+                new_token_counts[token] += freq
+                continue
+
+            # Fast path: if left part of pair not present, skip
+            if a_id_local not in token:
                 new_token_counts[token] += freq
                 continue
 
             i = 0
             changed = False
             new_token_list: list[int] = []
+            ntl_append = new_token_list.append
             while i < len(token):
                 if (
                     i < len(token) - 1
-                    and token[i] == a_id
-                    and token[i + 1] == b_id
+                    and token[i] == a_id_local
+                    and token[i + 1] == b_id_local
                 ):
-                    new_token_list.append(new_id)
+                    ntl_append(new_id)
                     i += 2
                     changed = True
                 else:
-                    new_token_list.append(token[i])
+                    ntl_append(token[i])
                     i += 1
 
             if not changed:
