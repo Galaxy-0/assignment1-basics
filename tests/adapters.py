@@ -29,7 +29,20 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
 
-    raise NotImplementedError
+    # Connect tests to the student's Linear implementation.
+    # The Linear module should store weights as W with shape (d_out, d_in)
+    # and compute y = x @ W.T over the last dimension while preserving any
+    # leading batch dimensions.
+    from cs336_basics.linear import Linear  # type: ignore
+
+    # Instantiate on the same device/dtype as provided weights to avoid mismatches
+    lin = Linear(d_in, d_out, device=weights.device, dtype=weights.dtype)
+
+    # Load provided reference weights into the student's module
+    lin.load_state_dict({"W": weights})
+
+    # Run forward pass; expected output shape: (..., d_out)
+    return lin(in_features)
 
 
 def run_embedding(
@@ -51,7 +64,23 @@ def run_embedding(
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
 
-    raise NotImplementedError
+    # Connect tests to the student's Embedding implementation.
+    # The Embedding module should store weights as W with shape (vocab_size, d_model)
+    # and return embeddings via direct indexing.
+    from cs336_basics.embedding import Embedding  # type: ignore
+
+    emb = Embedding(
+        num_embeddings=vocab_size,
+        embedding_dim=d_model,
+        device=weights.device,
+        dtype=weights.dtype,
+    )
+
+    # Load provided reference weights into the student's module
+    emb.load_state_dict({"W": weights})
+
+    # Run forward pass; expected output shape: (..., d_model)
+    return emb(token_ids)
 
 
 def run_swiglu(
